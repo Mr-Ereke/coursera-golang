@@ -1,13 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
 	"github.com/mailru/easyjson/jlexer"
 	"github.com/mailru/easyjson/jwriter"
 	"io"
-	"io/ioutil"
 	"os"
 	"strings"
-	"fmt"
+	"sync"
 )
 
 type User struct {
@@ -16,36 +17,44 @@ type User struct {
 	Name string `json:"name"`
 }
 
+var pool = sync.Pool{
+	New: func() interface{} {
+		return new(User)
+	},
+}
+
+var emptyUser = &User{}
+
+func (u *User) Reset() {
+	*u = *emptyUser
+}
+
 // вам надо написать более быструю оптимальную этой функции
 func FastSearch(out io.Writer) {
 	file, err := os.Open(filePath)
+
 	if err != nil {
 		panic(err)
 	}
 
-	fileContents, err := ioutil.ReadAll(file)
-	if err != nil {
-		panic(err)
-	}
+	scanner := bufio.NewScanner(file)
+	scanner.Split(bufio.ScanLines)
 
 	seenBrowsers := []string{}
 	uniqueBrowsers := 0
 	foundUsers := ""
 
-	lines := strings.Split(string(fileContents), "\n")
+	i := -1
 
-	users := make([]User, 0, len(lines))
+	for scanner.Scan() {
+		i++
+		user := pool.Get().(*User)
+		err := user.UnmarshalJSON([]byte(scanner.Text()))
 
-	for _, line := range lines {
-		user := User{}
-		err := user.UnmarshalJSON([]byte(line))
 		if err != nil {
 			panic(err)
 		}
-		users = append(users, user)
-	}
 
-	for i, user := range users {
 		isAndroid := false
 		isMSIE := false
 
@@ -57,6 +66,7 @@ func FastSearch(out io.Writer) {
 				for _, item := range seenBrowsers {
 					if item == browser {
 						notSeenBefore = false
+						break
 					}
 				}
 
@@ -74,6 +84,7 @@ func FastSearch(out io.Writer) {
 				for _, item := range seenBrowsers {
 					if item == browser {
 						notSeenBefore = false
+						break
 					}
 				}
 
@@ -86,12 +97,15 @@ func FastSearch(out io.Writer) {
 		}
 
 		if !(isAndroid && isMSIE) {
+			user.Reset()
+			pool.Put(user)
 			continue
 		}
 
-		// log.Println("Android and MSIE user:", user["name"], user["email"])
 		email := strings.ReplaceAll(user.Email, "@", " [at] ")
 		foundUsers += fmt.Sprintf("[%d] %s <%s>\n", i, user.Name, email)
+		user.Reset()
+		pool.Put(user)
 	}
 
 	fmt.Fprintln(out, "found users:\n"+foundUsers)
