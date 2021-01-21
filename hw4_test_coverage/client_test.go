@@ -3,11 +3,9 @@ package main
 import (
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type TestCase struct {
@@ -34,17 +33,35 @@ type Row struct {
 	FirstName string   `xml:"first_name"`
 	LastName  string   `xml:"last_name"`
 	About     string   `xml:"about"`
-	Gender     string   `xml:"gender"`
+	Gender    string   `xml:"gender"`
 }
 
 func SearchServer(w http.ResponseWriter, r *http.Request) {
+	token := r.Header.Get("AccessToken")
+
+	if token != "secret" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	if token != "secret" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	query := r.FormValue("query")
 	offset, err := strconv.Atoi(r.FormValue("offset"))
-	limit, err := strconv.Atoi(r.FormValue("limit"))
-	//orderBy, err := strconv.Atoi(r.FormValue("order_by"))
 
 	if err != nil {
-		panic(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	limit, err := strconv.Atoi(r.FormValue("limit"))
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
 	users := ParseXML()
@@ -53,35 +70,51 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 
 	if query != "" {
 		for _, user := range users {
-			if (strings.Contains(user.Name, query) || strings.Contains(user.About, query)) {
+			if strings.Contains(user.Name, query) || strings.Contains(user.About, query) {
 				filterUsers = append(filterUsers, user)
 			}
 		}
 	}
 
-	//var orderFieldName string
+	orderBy, err := strconv.Atoi(r.FormValue("order_by"))
 
-	switch orderField := r.FormValue("order_field"); orderField {
-	case "Id":
-		//orderFieldName = "Id"
-		sort.Slice(filterUsers[:], func(i, j int) bool {
-			return filterUsers[i].Id < filterUsers[j].Id
-		})
-		break
-	case "Age":
-		//orderFieldName = "Age"
-		sort.Slice(filterUsers[:], func(i, j int) bool {
-			return filterUsers[i].Age < filterUsers[j].Age
-		})
-		break
-	case "Name":
-		//orderFieldName = "Name"
-		break
-	case "":
-		//orderFieldName = "Name"
-		break
-	default:
-		errors.New(ErrorBadOrderField)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if orderBy != OrderByAsIs {
+		switch orderField := r.FormValue("order_field"); orderField {
+		case "Id":
+			sort.Slice(filterUsers[:], func(i, j int) bool {
+				return filterUsers[i].Id < filterUsers[j].Id
+			})
+			break
+		case "Age":
+			sort.Slice(filterUsers[:], func(i, j int) bool {
+				return filterUsers[i].Age < filterUsers[j].Age
+			})
+			break
+		case "Name":
+			sort.Slice(filterUsers[:], func(i, j int) bool {
+				return filterUsers[i].Name < filterUsers[j].Name
+			})
+			break
+		case "":
+			sort.Slice(filterUsers[:], func(i, j int) bool {
+				return filterUsers[i].Name < filterUsers[j].Name
+			})
+			break
+		default:
+			fmt.Errorf("ErrorBadOrderField")
+			return
+		}
+	}
+
+	if orderBy == OrderByAsc {
+		for i, j := 0, len(filterUsers)-1; i < j; i, j = i+1, j-1 {
+			filterUsers[i], filterUsers[j] = filterUsers[j], filterUsers[i]
+		}
 	}
 
 	sliceLimit := 0
@@ -99,35 +132,10 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 	for _, user := range limitedUsers {
 		if jsn, err := json.Marshal(user); err == nil {
 			response = append(response, string(jsn))
-		} else {
-			log.Panic(err)
 		}
 	}
 
-	w.WriteHeader(http.StatusOK)
-	io.WriteString(w, "[" + strings.Join(response, ",") + "]")
-
-	//switch limit {
-	//case "1":
-	//	w.WriteHeader(http.StatusOK)
-	//	io.WriteString(w, `[{"Id":1,"Name":"Hilda","Age":21,"About":"green","Gender":"female"}]`)
-	//	fallthrough
-	//case "2":
-	//	w.WriteHeader(http.StatusUnauthorized)
-	//	io.WriteString(w, `[{"Id":1,"Name":"Hilda","Age":21,"About":"green","Gender":"female"}]`)
-	//	breakoffset
-	//case "3":
-	//	w.WriteHeader(http.StatusBadRequest)
-	//	io.WriteString(w, `[{"Id":1,"Name":"Hilda","Age":21,"About":"green","Gender":"female"}]`)
-	//	break
-	//case "4":
-	//	w.WriteHeader(http.StatusBadRequest)
-	//	http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-	//	break
-	//default:
-	//	w.WriteHeader(http.StatusInternalServerError)
-	//	io.WriteString(w, `[{"Id":1,"Name":"Hilda","Age":21,"About":"green","Gender":"female"}]`)
-	//}
+	io.WriteString(w, "["+strings.Join(response, ",")+"]")
 }
 
 func ParseXML() []User {
@@ -159,11 +167,11 @@ func ParseXML() []User {
 	return users
 }
 
-func TestFindUsers(t *testing.T) {
+func TestRequest(t *testing.T) {
 	cases := []TestCase{
 		TestCase{
 			req: SearchRequest{
-				Limit:      30,
+				Limit:      26,
 				Offset:     0,
 				Query:      "minim",
 				OrderField: "Id",
@@ -214,10 +222,11 @@ func TestFindUsers(t *testing.T) {
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(SearchServer))
+	defer ts.Close()
 
 	for _, item := range cases {
 		client := &SearchClient{
-			AccessToken: "token",
+			AccessToken: "secret",
 			URL:         ts.URL,
 		}
 
@@ -235,5 +244,159 @@ func TestFindUsers(t *testing.T) {
 		//	t.Errorf("[%d] wrong result, expected %#v, got %#v", caseNum, item.Result, result)
 		//}
 	}
-	ts.Close()
+}
+
+func TestUnauthorized(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(SearchServer))
+	defer ts.Close()
+
+	client := &SearchClient{
+		AccessToken: "hack",
+		URL:         ts.URL,
+	}
+
+	_, err := client.FindUsers(SearchRequest{})
+
+	if err != nil {
+	}
+}
+
+func TestInternalServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	client := &SearchClient{
+		AccessToken: "secret",
+		URL:         ts.URL,
+	}
+
+	_, err := client.FindUsers(SearchRequest{})
+
+	if err != nil {
+	}
+}
+
+func TestUnpackJson(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"format":"json"}`)
+		return
+	}))
+
+	defer ts.Close()
+
+	client := &SearchClient{
+		AccessToken: "secret",
+		URL:         ts.URL,
+	}
+
+	_, err := client.FindUsers(SearchRequest{
+		Limit:      3,
+		Offset:     0,
+		Query:      "minim",
+		OrderField: "Id",
+		OrderBy:    1,
+	})
+
+	if err != nil {
+	}
+}
+
+func TestBadRequest(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		query := r.FormValue("query")
+		io.WriteString(w, query)
+	}))
+
+	defer ts.Close()
+
+	client := &SearchClient{
+		AccessToken: "secret",
+		URL:         ts.URL,
+	}
+
+	_, err := client.FindUsers(SearchRequest{
+		Limit:      3,
+		Offset:     0,
+		Query:      "minim",
+		OrderField: "Id",
+		OrderBy:    1,
+	})
+
+	if err != nil {
+	}
+
+	_, err = client.FindUsers(SearchRequest{
+		Limit:      6,
+		Offset:     0,
+		Query:      `{"Error":"ErrorBadOrderField"}`,
+		OrderField: "Id",
+		OrderBy:    1,
+	})
+
+	if err != nil {
+	}
+
+	_, err = client.FindUsers(SearchRequest{
+		Limit:      2,
+		Offset:     0,
+		Query:      `{"Error":"unknown bad request error"}`,
+		OrderField: "Id",
+		OrderBy:    1,
+	})
+
+	if err != nil {
+	}
+}
+
+func TestTimeoutError(t *testing.T) {
+	responseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2000 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(""))
+	})
+	ts := httptest.NewServer(responseHandler)
+	defer ts.Close()
+
+	client := &SearchClient{
+		AccessToken: "secret",
+		URL:         ts.URL,
+	}
+
+	_, err := client.FindUsers(SearchRequest{
+		Limit:      3,
+		Offset:     0,
+		Query:      "minim",
+		OrderField: "Id",
+		OrderBy:    1,
+	})
+	if err != nil {
+	}
+}
+
+func TestServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))
+
+	defer ts.Close()
+
+	client := &SearchClient{
+		AccessToken: "secret",
+		URL:         "error",
+	}
+
+	_, err := client.FindUsers(SearchRequest{
+		Limit:      3,
+		Offset:     0,
+		Query:      "minim",
+		OrderField: "Id",
+		OrderBy:    1,
+	})
+
+	if err != nil {
+		//fmt.Println(err)
+	}
 }
