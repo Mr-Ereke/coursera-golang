@@ -1,7 +1,7 @@
 ### coursera-golang
 Coursera golang taks 
 
-#1) Утилита tree
+1. Утилита tree
 
 Выводит дерево каталогов и файлов (если указана опция -f)
 
@@ -46,7 +46,7 @@ go run main.go .
 	└───zline
 ```
 
-#2) Утилита unix pipeline, что-то вроде:
+2. Утилита unix pipeline, что-то вроде:
 ```
 grep 127.0.0.1 | awk '{print $2}' | sort | uniq -c | sort -nr
 ```
