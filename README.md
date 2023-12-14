@@ -1,7 +1,7 @@
 ### coursera-golang
 Coursera golang taks 
 
-1. Утилита tree
+1) Утилита tree
 
 Выводит дерево каталогов и файлов (если указана опция -f)
 
@@ -46,7 +46,7 @@ go run main.go .
 	└───zline
 ```
 
-2. Утилита unix pipeline, что-то вроде:
+2) Утилита unix pipeline, что-то вроде:
 ```
 grep 127.0.0.1 | awk '{print $2}' | sort | uniq -c | sort -nr
 ```
@@ -92,3 +92,26 @@ CombineResults 29568666068035183841425683795340791879727309630931025356555_49580
 ```
 
 Запускать как `go test -v -race`
+
+3) Оптимизация функции и работа с профайлером pprof.
+
+Пример результатов с которыми будет сравниваться:
+```
+$ go test -bench . -benchmem
+
+goos: windows
+
+goarch: amd64
+
+BenchmarkSlow-8 10 142703250 ns/op 336887900 B/op 284175 allocs/op
+
+BenchmarkSolution-8 500 2782432 ns/op 559910 B/op 10422 allocs/op
+
+PASS
+
+ok coursera/hw3 3.897s
+```
+
+Запуск:
+* `go test -v` - чтобы проверить что ничего не сломалось
+* `go test -bench . -benchmem` - для просмотра производительности
